@@ -5,17 +5,19 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 
 from common.managers import UserManager
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 
 
 
-class User(AbstractBaseUser, PermissionsMixin):
+class User(AbstractBaseUser, PermissionsMixin, BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=150, blank=True, null=True)
 
     org = models.ForeignKey(
-        Org,
+        "Org",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -87,7 +89,7 @@ class Profile(BaseModel):
     )
 
     org = models.ForeignKey(
-        Org,
+        "Org",
         on_delete=models.CASCADE,
         related_name="profiles",
         null=True,
@@ -97,7 +99,7 @@ class Profile(BaseModel):
     first_name = models.CharField(max_length=100, blank=True, null=True)
     last_name = models.CharField(max_length=100, blank=True, null=True)
     phone = models.CharField(max_length=30, blank=True, null=True)
-    avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+    avatar = models.FileField(upload_to="avatars/", null=True, blank=True)
 
     job_title = models.CharField(max_length=150, blank=True, null=True)
     department = models.CharField(max_length=150, blank=True, null=True)
@@ -117,7 +119,7 @@ class Team(BaseModel):
     name = models.CharField(max_length=150)
 
     org = models.ForeignKey(
-    org,
+    Org,
      on_delete=models.CASCADE,
      related_name="teams",
     )
@@ -144,7 +146,7 @@ class Tag(BaseModel):
     name = models.CharField(max_length=100)
 
     org = models.ForeignKey(
-        Org,
+        "Org",
         on_delete=models.CASCADE,
         related_name="tags",
     )
@@ -155,6 +157,139 @@ class Tag(BaseModel):
 
     def __str__(self):
         return self.name
+
+
+class Comment(BaseModel):
+    # ارتباط generic با هر مدل
+
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey("content_type", "object_id")
+
+    # متن کامنت
+    text = models.TextField()
+
+    # نویسنده کامنت
+    author = models.ForeignKey(
+        "Profile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="comments",
+    )
+
+    # سازمان
+    org = models.ForeignKey(
+        "Org",
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+
+    class Meta:
+        db_table = "comments"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["org", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return self.text[:40]
+
+
+
+class Attachment(BaseModel):
+    # ارتباط generic با هر مدل
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey("content_type", "object_id")
+
+    file = models.FileField(upload_to="attachments/%Y/%m/")
+    name = models.CharField(max_length=255, blank=True, null=True)
+
+    uploaded_by = models.ForeignKey(
+        "Profile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="attachments",
+    )
+
+    org = models.ForeignKey(
+        "Org",
+        on_delete=models.CASCADE,
+        related_name="attachments",
+    )
+
+    class Meta:
+        db_table = "attachments"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["org", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return self.name or self.file.name
+
+
+
+class Activity(BaseModel):
+    """Track user activities across all CRM entities"""
+
+    ACTION_CHOICES = (
+        ("CREATE", "Created"),
+        ("UPDATE", "Updated"),
+        ("DELETE", "Deleted"),
+        ("VIEW", "Viewed"),
+        ("COMMENT", "Commented"),
+        ("ASSIGN", "Assigned"),
+    )
+
+    ENTITY_TYPE_CHOICES = (
+        ("Account", "Account"),
+        ("Lead", "Lead"),
+        ("Contact", "Contact"),
+        ("Opportunity", "Opportunity"),
+        ("Case", "Case"),
+        ("Task", "Task"),
+        ("Invoice", "Invoice"),
+        ("Event", "Event"),
+        ("Document", "Document"),
+        ("Team", "Team"),
+    )
+
+    user = models.ForeignKey(
+        Profile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="activities",
+    )
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    entity_type = models.CharField(max_length=50, choices=ENTITY_TYPE_CHOICES)
+    entity_id = models.UUIDField()
+    entity_name = models.CharField(max_length=255, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    org = models.ForeignKey(Org, on_delete=models.CASCADE, related_name="activities")
+
+    class Meta:
+        verbose_name = "Activity"
+        verbose_name_plural = "Activities"
+        db_table = "activity"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["org", "-created_at"]),
+            models.Index(fields=["entity_type", "entity_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} {self.get_action_display()} {self.entity_type}: {self.entity_name}"
+
+    @property
+    def created_on_arrow(self):
+        return timesince(self.created_at) + " ago"
+
 
 
 
